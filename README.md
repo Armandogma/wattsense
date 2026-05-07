@@ -31,6 +31,7 @@ wattsense_server.py      Servidor Flask, API, Socket.IO, base de datos y tareas 
 templates/dashboard.html Dashboard web de monitoreo y control
 rubeas.ipynb             Notebook de experimentacion y entrenamiento de modelos
 models/                  Carpeta donde se generan los modelos entrenados localmente
+firmware/esp32_wattsense Codigo del ESP32 para enviar lecturas y controlar el rele
 ```
 
 ## Instalacion
@@ -78,6 +79,19 @@ Ejemplo de lectura enviada por un ESP32:
   "current": 1.25
 }
 ```
+
+## Firmware ESP32
+
+El codigo del ESP32 esta en `firmware/esp32_wattsense/esp32_wattsense.ino`.
+
+Antes de compilarlo en Arduino IDE:
+
+1. Copia `firmware/esp32_wattsense/secrets.example.h` como `firmware/esp32_wattsense/secrets.h`.
+2. Edita `secrets.h` con tu red WiFi, contrasena y la IP del servidor Flask.
+3. Instala la libreria `ArduinoJson` desde el Library Manager de Arduino IDE.
+4. Carga el sketch en el ESP32.
+
+`secrets.h` esta ignorado por Git para evitar subir credenciales al repositorio.
 
 ## Notas
 
