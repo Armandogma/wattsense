@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wattsense Dashboard Final</title>
+    <script src="https://cdn.plot.ly/plotly-2.29.1.min.js"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        :root {
+            --bs-primary-rgb: 52, 152, 219;
+            --bs-dark-rgb: 44, 62, 80;
+        }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background-color: #ecf0f1; }
+        .navbar-brand { font-weight: 600; }
+        .card { border: none; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+        .summary-item { text-align: center; padding: 1rem; border-radius: 0.75rem; background: white; flex: 1; min-width: 150px; }
+        .summary-item h3 { font-size: 2rem; font-weight: 700; color: #3498db; }
+        .summary-item p { margin-bottom: 0; color: #7f8c8d; }
+        .chart-container, .log-container { min-height: 350px; position: relative; }
+        .loading-spinner-wrapper { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; justify-content: center; align-items: center; background-color: rgba(255, 255, 255, 0.7); z-index: 10; border-radius: 0.5rem; }
+        .nav-pills .nav-link { color: #2c3e50; }
+        .nav-pills .nav-link.active { background-color: #3498db; }
+        .alert-item { background-color: white; border-radius: 8px; border-left: 5px solid; transition: opacity 0.3s ease-out, transform 0.3s ease-out; }
+        .alert-item.removing { opacity: 0; transform: scale(0.95); }
+        .alert-item .badge { font-weight: 600; }
+        .alert-item.type-threshold { border-left-color: #e74c3c; }
+        .alert-item.type-schedule { border-left-color: #f39c12; }
+        .recommendation-item .badge { width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;}
+        .form-switch .form-check-input { width: 3em; height: 1.5em; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark" style="background-color: #2c3e50;">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#"><i class="bi bi-lightning-charge-fill"></i> Wattsense</a>
+            <span class="navbar-text" id="deviceNameHeader"></span>
+        </div>
+    </nav>
+
+    <div class="container-fluid p-4">
+        <!-- Fila de Resumen de Estado -->
+        <div class="d-flex flex-wrap justify-content-center mb-4 gap-3">
+            <div class="summary-item"><h3 id="currentPower">--</h3><p>Consumo Actual (W)</p></div>
+            <div class="summary-item"><h3 id="dailyConsumption">--</h3><p>Consumo Hoy (kWh)</p></div>
+            <div class="summary-item"><h3 id="voltage">--</h3><p>Voltaje (V)</p></div>
+            <div class="summary-item"><h3 id="current">--</h3><p>Corriente (A)</p></div>
+        </div>
+
+        <div class="row">
+            <!-- Columna Izquierda: Gráficas y Control -->
+            <div class="col-xl-8">
+                <!-- Gráfica Histórica y Pronóstico -->
+                <div class="card">
+                    <div class="card-header bg-white border-0">
+                        <ul class="nav nav-pills" id="pills-tab" role="tablist">
+                            <li class="nav-item" role="presentation"><button class="nav-link active" id="pills-historic-tab" data-bs-toggle="pill" data-bs-target="#pills-historic" type="button" role="tab">Consumo Histórico</button></li>
+                            <li class="nav-item" role="presentation"><button class="nav-link" id="pills-forecast-tab" data-bs-toggle="pill" data-bs-target="#pills-forecast" type="button" role="tab">Pronóstico de Consumo</button></li>
+                        </ul>
+                    </div>
+                    <div class="card-body">
+                        <div class="tab-content" id="pills-tabContent">
+                            <div class="tab-pane fade show active" id="pills-historic" role="tabpanel">
+                                <div class="d-flex justify-content-end mb-2">
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <button type="button" class="btn btn-outline-primary active" onclick="loadRealtimeChart(24, this)">24h</button>
+                                        <button type="button" class="btn btn-outline-primary" onclick="loadRealtimeChart(168, this)">7d</button>
+                                        <button type="button" class="btn btn-outline-primary" onclick="loadRealtimeChart(720, this)">30d</button>
+                                    </div>
+                                </div>
+                                <div id="realtimeChart" class="chart-container" style="min-height: 400px;"></div>
+                            </div>
+                            <div class="tab-pane fade" id="pills-forecast" role="tabpanel">
+                                <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+                                     <div class="btn-group btn-group-sm" role="group">
+                                        <button type="button" class="btn btn-outline-primary active" onclick="loadForecast(1, this)">1h</button>
+                                        <button type="button" class="btn btn-outline-primary" onclick="loadForecast(3, this)">3h</button>
+                                        <button type="button" class="btn btn-outline-primary" onclick="loadForecast(6, this)">6h</button>
+                                        <button type="button" class="btn btn-outline-primary" onclick="loadForecast(12, this)">12h</button>
+                                        <button type="button" class="btn btn-outline-primary" onclick="loadForecast(24, this)">24h</button>
+                                    </div>
+                                    <div class="form-check form-check-inline"><input class="form-check-input" type="radio" name="forecastModel" id="arimaModel" value="arima" onchange="loadForecast(currentForecastHorizon, document.querySelector('#pills-forecast .btn-group .active'))"><label class="form-check-label" for="arimaModel">ARIMA</label></div>
+                                    <div class="form-check form-check-inline"><input class="form-check-input" type="radio" name="forecastModel" id="rollingAvgModel" value="rolling_avg" checked onchange="loadForecast(currentForecastHorizon, document.querySelector('#pills-forecast .btn-group .active'))"><label class="form-check-label" for="rollingAvgModel">Promedio</label></div>
+                                </div>
+                                <div id="forecastChart" class="chart-container" style="min-height: 400px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Control y Automatización -->
+                <div class="card">
+                    <div class="card-header bg-white"><h5 class="mb-0"><i class="bi bi-toggles2 me-2"></i> Control y Automatización</h5></div>
+                    <div class="card-body d-flex justify-content-around align-items-center flex-wrap p-4 gap-4">
+                        <div class="text-center">
+                            <label class="form-label fw-bold">Control Manual</label>
+                            <div class="form-check form-switch fs-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="relay-toggle">
+                                <label class="form-check-label" id="relayStatusText">Apagado</label>
+                            </div>
+                        </div>
+                        <div class="vr d-none d-sm-block"></div>
+                        <div class="text-center">
+                            <label class="form-label fw-bold">Horario Automático</label>
+                            <div class="input-group input-group-sm mb-2">
+                                <span class="input-group-text">Encender</span><input type="time" id="schedule-on" class="form-control">
+                                <span class="input-group-text">Apagar</span><input type="time" id="schedule-off" class="form-control">
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="schedule-enable"><label class="form-check-label" for="schedule-enable">Habilitar Horario</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                 <!-- Gestión de Dispositivos -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center bg-white">
+                        <h5 class="mb-0"><i class="bi bi-hdd-stack-fill me-2"></i> Gestión de Dispositivo</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead><tr><th>Nombre</th><th>Consumo Prom. (en uso)</th><th>Umbral (W)</th><th>Acciones</th></tr></thead>
+                                <tbody>
+                                    <tr>
+                                        <td><strong id="tableName">--</strong></td>
+                                        <td><span id="device-avg-power">--</span> W</td>
+                                        <td><span id="tableThreshold">--</span> W</td>
+                                        <td><button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#editDeviceModal"><i class="bi bi-pencil-square me-1"></i> Editar</button></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Columna Derecha: Alertas y Análisis -->
+            <div class="col-xl-4">
+                <!-- Alertas Recientes -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center bg-white">
+                        <h5 class="mb-0"><i class="bi bi-bell-fill me-2 text-warning"></i> Alertas Recientes</h5>
+                        <button class="btn btn-sm btn-outline-secondary border-0" onclick="markAllRead()">Marcar Leídas</button>
+                    </div>
+                    <div id="alertsList" class="card-body pt-2" style="max-height: 400px; overflow-y: auto;"></div>
+                </div>
+                <!-- Análisis y Recomendaciones -->
+                <div class="card">
+                    <div class="card-header bg-white"><h5 class="mb-0"><i class="bi bi-lightbulb-fill me-2 text-info"></i> Análisis de Eficiencia</h5></div>
+                    <div id="analysisContainer" class="card-body"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para Editar Dispositivo -->
+    <div class="modal fade" id="editDeviceModal" tabindex="-1" aria-labelledby="editDeviceModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title" id="editDeviceModalLabel">Editar Dispositivo</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+                <div class="modal-body">
+                    <div class="mb-3"><label for="deviceNameInput" class="form-label">Nombre del Dispositivo</label><input type="text" class="form-control" id="deviceNameInput"></div>
+                    <div class="mb-3"><label for="deviceThresholdInput" class="form-label">Umbral de Potencia (W)</label><input type="number" class="form-control" id="deviceThresholdInput"></div>
+                </div>
+                <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button><button type="button" class="btn btn-primary" onclick="saveDeviceSettings()">Guardar Cambios</button></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const API_BASE_URL = window.location.origin;
+        const socket = io();
+        let editDeviceModal;
+        let currentForecastHorizon = 1;
+
+        // --- Utilidades ---
+        function showSpinner(elementId, show = true) {
+            const container = document.getElementById(elementId);
+            if (!container) return;
+            let spinner = container.querySelector('.loading-spinner-wrapper');
+            if (show) {
+                if (!spinner) {
+                    spinner = document.createElement('div');
+                    spinner.className = 'loading-spinner-wrapper';
+                    spinner.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">Cargando...</span></div>';
+                    container.prepend(spinner);
+                }
+                spinner.style.display = 'flex';
+            } else if (spinner) {
+                spinner.style.display = 'none';
+            }
+        }
+        function showErrorMessage(elementId, message) {
+            const container = document.getElementById(elementId);
+            if (container) {
+                showSpinner(elementId, false);
+                container.innerHTML = `<div class="alert alert-warning text-center small p-2 m-auto">${message}</div>`;
+            }
+        }
+        async function sendCommand(endpoint, body) {
+            try { await fetch(`${API_BASE_URL}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); } catch (error) { console.error("Error al enviar comando:", error); }
+        }
+
+        // --- Lógica de UI ---
+        function updateSummary(data) {
+            document.getElementById('currentPower').textContent = data.power.toFixed(1);
+            document.getElementById('dailyConsumption').textContent = data.consumption_today_kwh.toFixed(3);
+            document.getElementById('voltage').textContent = data.voltage.toFixed(2);
+            document.getElementById('current').textContent = data.current.toFixed(3);
+            document.getElementById('deviceNameHeader').textContent = data.device_name || 'Cargando...';
+            document.getElementById('tableName').textContent = data.device_name;
+            document.getElementById('tableThreshold').textContent = data.power_threshold;
+            document.getElementById('deviceNameInput').value = data.device_name;
+            document.getElementById('deviceThresholdInput').value = data.power_threshold;
+        }
+
+        function updateControls(data) {
+            const relayToggle = document.getElementById('relay-toggle');
+            const scheduleEnable = document.getElementById('schedule-enable');
+            relayToggle.checked = (data.relay_state === 'ON');
+            document.getElementById('relayStatusText').textContent = data.relay_state === 'ON' ? 'Encendido' : 'Apagado';
+            
+            // Sincronizar eventos de control
+            relayToggle.onclick = () => {
+                sendCommand('/control', { action: 'toggle_relay', state: relayToggle.checked ? 'ON' : 'OFF' });
+            };
+            scheduleEnable.onchange = () => {
+                sendCommand('/control', { action: 'toggle_schedule', enabled: scheduleEnable.checked });
+            };
+            document.getElementById('schedule-on').onchange = () => sendCommand('/control', { action: 'set_schedule', on: document.getElementById('schedule-on').value, off: document.getElementById('schedule-off').value });
+            document.getElementById('schedule-off').onchange = () => sendCommand('/control', { action: 'set_schedule', on: document.getElementById('schedule-on').value, off: document.getElementById('schedule-off').value });
+
+
+            scheduleEnable.checked = !data.manual_override;
+            document.getElementById('schedule-on').value = data.schedule_on;
+            document.getElementById('schedule-off').value = data.schedule_off;
+        }
+
+        // --- Carga de Datos y Gráficas ---
+        async function loadRealtimeChart(hours = 24, btnElement = null) {
+            if (btnElement) {
+                document.querySelectorAll('#pills-historic .btn-group .btn').forEach(btn => btn.classList.remove('active'));
+                btnElement.classList.add('active');
+            }
+            const chartId = 'realtimeChart';
+            showSpinner(chartId);
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/readings?hours=${hours}`);
+                if (!response.ok) throw new Error('No se pudieron cargar los datos.');
+                const data = await response.json();
+                if (data.length === 0) {
+                    showErrorMessage(chartId, `No hay datos en las últimas ${hours} horas.`);
+                    return;
+                }
+                showSpinner(chartId, false);
+                const localTimestamps = data.map(d => {const dt = new Date(d.timestamp);
+    // Ajusta a tu zona horaria, ej. -6 horas para CDMX (cuando no aplica DST)
+                    return new Date(dt.getTime() - (6 * 60 * 60 * 1000));});
+
+                const trace = { x: localTimestamps, y: data.map(d => d.power), mode: 'lines', line: { color: '#3498db', width: 2 } };
+                const layout = { xaxis: { title: 'Fecha y Hora', tickformat: '%H:%M' }, yaxis: { title: 'Potencia (W)', autorange: true }, margin: { t: 20, l: 50, r: 20, b: 40 } };
+                Plotly.newPlot(chartId, [trace], layout, { responsive: true, useResizeHandler: true });
+            } catch (error) { showErrorMessage(chartId, error.message); }
+        }
+
+        async function loadForecast(horizon = 1, btnElement = null) {
+            currentForecastHorizon = horizon;
+            if (btnElement) {
+                document.querySelectorAll('#pills-forecast .btn-group .btn').forEach(btn => btn.classList.remove('active'));
+                btnElement.classList.add('active');
+            }
+            const modelType = document.querySelector('input[name="forecastModel"]:checked').value;
+            const chartId = 'forecastChart';
+            showSpinner(chartId);
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/forecast?model=${modelType}&horizon=${horizon}`);
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Error en el servidor.');
+                showSpinner(chartId, false);
+
+                const trace = { x: data.labels.map(l => new Date(l)), y: data.data, type: 'lines', line: { color: modelType === 'arima' ? '#2ecc71' : '#f39c12', shape: 'spline' }, fill: 'tozeroy' };
+                const layout = { xaxis: { title: `Próximas ${horizon} horas`, tickformat: '%H:%M' }, yaxis: { title: 'Potencia (W)', autorange: true }, margin: { t: 20, l: 50, r: 20, b: 40 } };
+                Plotly.newPlot(chartId, [trace], layout, { responsive: true, useResizeHandler: true });
+            } catch (error) { showErrorMessage(chartId, error.message); }
+        }
+        
+        async function loadAnalysis() {
+            const container = document.getElementById('analysisContainer');
+            showSpinner('analysisContainer');
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/analysis`);
+                const data = await response.json();
+                showSpinner('analysisContainer', false);
+                container.innerHTML = '';
+                document.getElementById('device-avg-power').textContent = data.avg_power.toFixed(1);
+                data.recommendations.forEach(rec => {
+                    const isHigh = rec.toLowerCase().includes('consumo alto');
+                    const badgeClass = isHigh ? 'bg-danger-subtle text-danger-emphasis' : 'bg-info-subtle text-info-emphasis';
+                    const iconClass = isHigh ? 'bi-exclamation-triangle-fill' : 'bi-check-circle-fill';
+                    const recEl = document.createElement('div');
+                    recEl.className = 'd-flex align-items-start recommendation-item mb-3';
+                    recEl.innerHTML = `<div class="me-3 pt-1"><span class="badge ${badgeClass} rounded-circle p-2"><i class="${iconClass}"></i></span></div><div class="small">${rec}</div>`;
+                    container.appendChild(recEl);
+                });
+            } catch (error) { showErrorMessage('analysisContainer', 'Error al cargar análisis.'); }
+        }
+
+        // --- Lógica de Alertas ---
+        async function loadAlerts() {
+            const container = document.getElementById('alertsList');
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/alerts`);
+                const data = await response.json();
+                container.innerHTML = ''; 
+                if (data.alerts.length === 0) {
+                    container.innerHTML = '<p class="text-muted small text-center p-3">¡Todo en orden! Sin alertas recientes.</p>';
+                    return;
+                }
+                data.alerts.forEach(alert => {
+                    const alertEl = document.createElement('div');
+                    const badgeClass = alert.alert_type === 'threshold' ? 'bg-danger' : 'bg-warning text-dark';
+                    const badgeText = alert.alert_type === 'threshold' ? 'Umbral Excedido' : 'Fuera de Rango';
+                    const timeAgo = getTimeAgo(alert.timestamp);
+
+                    alertEl.className = `d-flex align-items-start p-2 mb-2 alert-item type-${alert.alert_type}`;
+                    alertEl.id = `alert-${alert.id}`;
+                    alertEl.innerHTML = `
+                        <div class="flex-grow-1">
+                            <div class="d-flex justify-content-between">
+                                <strong class="mb-1">${data.device_name}</strong><small class="text-muted">${timeAgo}</small>
+                            </div>
+                            <p class="mb-1 small">${alert.message}</p><span class="badge ${badgeClass}">${badgeText}</span>
+                        </div>
+                        <div class="d-flex flex-column ms-2">
+                             <button class="btn btn-sm btn-outline-danger mb-1" onclick="turnOffDevice(${alert.id})">Apagar</button>
+                             <button class="btn btn-sm btn-outline-secondary" onclick="markRead(${alert.id})"><i class="bi bi-check-lg"></i></button>
+                        </div>`;
+                    container.appendChild(alertEl);
+                });
+            } catch (error) { showErrorMessage('alertsList', 'Error al cargar alertas.'); }
+        }
+
+        async function markRead(alertId) {
+            const alertElement = document.getElementById(`alert-${alertId}`);
+            if (alertElement) {
+                alertElement.classList.add('removing');
+                await sendCommand(`/api/alerts/${alertId}/read`, {});
+                setTimeout(() => {
+                    // En lugar de remover el elemento, recargamos la lista completa.
+                    // Esto asegura que la UI siempre refleje el estado del servidor.
+                    loadAlerts();
+                }, 300);
+            }
+        }
+        
+        async function markAllRead() {
+            const alertElements = document.querySelectorAll('#alertsList .alert-item');
+            alertElements.forEach(el => el.classList.add('removing'));
+            await sendCommand('/api/alerts/read_all', {});
+            // Después de la animación, recargamos la lista. El servidor devolverá
+            // una lista vacía, y se mostrará el mensaje "Sin alertas".
+            setTimeout(() => loadAlerts(), 300);  
+        }
+
+        function turnOffDevice(alertId) {
+            sendCommand('/control', { action: 'toggle_relay', state: 'OFF' });
+            markRead(alertId);
+        }
+
+        // --- Lógica de Dispositivo ---
+        async function saveDeviceSettings() {
+            const newName = document.getElementById('deviceNameInput').value;
+            const newThreshold = document.getElementById('deviceThresholdInput').value;
+            await sendCommand('/api/device/update', { device_name: newName, power_threshold: newThreshold });
+            editDeviceModal.hide();
+        }
+
+        // --- Websockets y Carga Inicial ---
+        socket.on('connect', () => console.log('Conectado al servidor.'));
+        socket.on('new_reading', (reading) => {
+            document.getElementById('currentPower').textContent = reading.power.toFixed(1);
+            document.getElementById('voltage').textContent = reading.voltage.toFixed(2);
+            document.getElementById('current').textContent = reading.current.toFixed(3);
+            const chartDiv = document.getElementById('realtimeChart');
+            if (chartDiv && chartDiv.data) {
+                Plotly.extendTraces(chartDiv, { x: [[new Date(reading.timestamp)]], y: [[reading.power]] }, [0]);
+            }
+        });
+        socket.on('new_alert', () => { loadAlerts(); loadAnalysis(); });
+        socket.on('state_update', (data) => { updateSummary(data); updateControls(data); loadAnalysis(); });
+
+        async function fetchInitialData() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/data`);
+                const data = await response.json();
+                updateSummary(data); updateControls(data);
+            } catch (error) { console.error("Error fetching initial data:", error); }
+        }
+
+        async function initializeDashboard() {
+            editDeviceModal = new bootstrap.Modal(document.getElementById('editDeviceModal'));
+            await fetchInitialData();
+            loadRealtimeChart(24, document.querySelector('#pills-historic .btn-group .active'));
+            loadForecast(1, document.querySelector('#pills-forecast .btn-group .active'));
+            loadAlerts();
+            loadAnalysis();
+        }
+
+        function getTimeAgo(isoString) {
+            const date = new Date(isoString);
+            const seconds = Math.floor((new Date() - date) / 1000);
+            let interval = seconds / 31536000;
+            if (interval > 1) return `hace ${Math.floor(interval)} años`;
+            interval = seconds / 2592000;
+            if (interval > 1) return `hace ${Math.floor(interval)} meses`;
+            interval = seconds / 86400;
+            if (interval > 1) return `hace ${Math.floor(interval)} días`;
+            interval = seconds / 3600;
+            if (interval > 1) return `hace ${Math.floor(interval)} horas`;
+            interval = seconds / 60;
+            if (interval > 1) return `hace ${Math.floor(interval)} min`;
+            return `hace ${Math.floor(seconds)} seg`;
+        }
+
+        document.addEventListener('DOMContentLoaded', initializeDashboard);
+        setInterval(fetchInitialData, 30000);
+    </script>
+</body>
+</html>
+
